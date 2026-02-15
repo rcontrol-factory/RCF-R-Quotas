@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useSettings, useUpdateSettings } from "@/hooks/use-settings.ts";
+// ✅ FIX BUILD: usar path relativo (mata o ENOENT no Cloudflare)
+import { useSettings, useUpdateSettings } from "../hooks/use-settings";
 import {
   insertCompanySettingsSchema,
   type InsertCompanySettings,
@@ -170,7 +171,9 @@ function UserSpecialtyEditor({
   const { data: allSpecialties = [] } = useQuery<Specialty[]>({
     queryKey: ["/api/specialties"],
   });
-  const { data: trades = [] } = useQuery<Trade[]>({ queryKey: ["/api/trades"] });
+  const { data: trades = [] } = useQuery<Trade[]>({
+    queryKey: ["/api/trades"],
+  });
   const { data: userSpecs = [], isLoading } = useQuery<Specialty[]>({
     queryKey: ["/api/admin/users", userId, "specialties"],
   });
@@ -282,9 +285,106 @@ function UserSpecialtyEditor({
     </div>
   );
 }
+
+function ManageSpecialties({ t }: { t: (k: StringKey) => string }) {
+  const { data: employees = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/admin/users"],
+  });
+
+  const { user } = useAuth();
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardContent className="flex justify-center p-8">
+          <Loader2 className="animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const allMembers = user
+    ? [{ id: user.id, username: user.username }, ...employees.filter((e) => e.id !== user.id)]
+    : employees;
+
+  return (
+    <Card data-testid="card-manage-specialties">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Wrench className="w-5 h-5 text-muted-foreground" />
+          {t("manageSpecialties")}
+        </CardTitle>
+        <CardDescription>{t("manageSpecialtiesDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {allMembers.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-4">
+            {t("noEmployees")}
+          </p>
+        ) : (
+          allMembers.map((emp: any) => (
+            <UserSpecialtyEditor
+              key={emp.id}
+              userId={emp.id}
+              username={emp.username}
+              t={t}
+            />
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EmployeeManagement({ locale }: { locale: string }) {
+  const { toast } = useToast();
+  const [showInviteForm, setShowInviteForm] = useState(false);
+  const [inviteRole, setInviteRole] = useState("USER");
+  const [inviteLink, setInviteLink] = useState("");
+
+  const { data: employees = [], isLoading: loadingEmployees } = useQuery<any[]>({
+    queryKey: ["/api/employees"],
+  });
+
+  const { data: inviteTokens = [], isLoading: loadingTokens } = useQuery<any[]>({
+    queryKey: ["/api/invite/list"],
+  });
+
+  const toggleActive = useMutation({
+    mutationFn: async ({ userId, isActive }: { userId: number; isActive: boolean }) => {
+      await apiRequest("PUT", `/api/employees/${userId}/active`, { isActive });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
+      toast({ title: locale === "pt" ? "Status atualizado" : "Status updated" });
+    },
+  });
+
+  const generateInvite = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/invite/create", {
+        role: inviteRole,
+        expiresDays: 7,
+      });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      const link = `${window.location.origin}/signup/${data.token}`;
+      setInviteLink(link);
+      queryClient.invalidateQueries({ queryKey: ["/api/invite/list"] });
+      toast({ title: locale === "pt" ? "Link gerado" : "Link generated" });
+    },
+  });
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(inviteLink);
+    toast({ title: locale === "pt" ? "Link copiado" : "Link copied" });
+  };
+
   const getTokenStatus = (token: any) => {
     if (token.usedByUserId) return locale === "pt" ? "Usado" : "Used";
-    if (token.expiresAt && new Date(token.expiresAt) < new Date()) return locale === "pt" ? "Expirado" : "Expired";
+    if (token.expiresAt && new Date(token.expiresAt) < new Date())
+      return locale === "pt" ? "Expirado" : "Expired";
     return locale === "pt" ? "Ativo" : "Active";
   };
 
@@ -311,12 +411,12 @@ function UserSpecialtyEditor({
             : "Invite new employees and manage your team."}
         </CardDescription>
       </CardHeader>
-
       <CardContent className="space-y-6">
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h3 className="text-sm font-medium">{locale === "pt" ? "Funcionarios" : "Employees"}</h3>
-
+            <h3 className="text-sm font-medium">
+              {locale === "pt" ? "Funcionarios" : "Employees"}
+            </h3>
             <Button
               size="sm"
               variant={showInviteForm ? "secondary" : "default"}
@@ -335,34 +435,51 @@ function UserSpecialtyEditor({
             <div className="border rounded-md p-4 space-y-3">
               <div className="flex items-end gap-2 flex-wrap">
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">{locale === "pt" ? "Cargo" : "Role"}</label>
+                  <label className="text-sm font-medium">
+                    {locale === "pt" ? "Cargo" : "Role"}
+                  </label>
                   <Select value={inviteRole} onValueChange={setInviteRole}>
-                    <SelectTrigger className="w-[140px]" data-testid="select-invite-role">
+                    <SelectTrigger
+                      className="w-[140px]"
+                      data-testid="select-invite-role"
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="USER">{locale === "pt" ? "Usuario" : "User"}</SelectItem>
+                      <SelectItem value="USER">
+                        {locale === "pt" ? "Usuario" : "User"}
+                      </SelectItem>
                       <SelectItem value="ADMIN">Admin</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-
                 <Button
                   size="default"
                   onClick={() => generateInvite.mutate()}
                   disabled={generateInvite.isPending}
                   data-testid="button-generate-invite"
                 >
-                  {generateInvite.isPending && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
+                  {generateInvite.isPending && (
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                  )}
                   <Link2 className="w-4 h-4 mr-1.5" />
                   {locale === "pt" ? "Gerar Link" : "Generate Link"}
                 </Button>
               </div>
-
               {inviteLink && (
                 <div className="flex items-center gap-2">
-                  <Input readOnly value={inviteLink} className="flex-1 text-xs" data-testid="input-invite-link" />
-                  <Button size="icon" variant="outline" onClick={copyLink} data-testid="button-copy-invite">
+                  <Input
+                    readOnly
+                    value={inviteLink}
+                    className="flex-1 text-xs"
+                    data-testid="input-invite-link"
+                  />
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    onClick={copyLink}
+                    data-testid="button-copy-invite"
+                  >
                     <Copy className="w-4 h-4" />
                   </Button>
                 </div>
@@ -372,7 +489,9 @@ function UserSpecialtyEditor({
 
           {employees.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">
-              {locale === "pt" ? "Nenhum funcionario ainda." : "No employees yet."}
+              {locale === "pt"
+                ? "Nenhum funcionario ainda."
+                : "No employees yet."}
             </p>
           ) : (
             <div className="space-y-2">
@@ -383,29 +502,52 @@ function UserSpecialtyEditor({
                   data-testid={`employee-row-${emp.id}`}
                 >
                   <div className="flex flex-col gap-0.5">
-                    <span className="text-sm font-medium" data-testid={`text-employee-username-${emp.id}`}>
+                    <span
+                      className="text-sm font-medium"
+                      data-testid={`text-employee-username-${emp.id}`}
+                    >
                       {emp.username}
                     </span>
-                    <span className="text-xs text-muted-foreground" data-testid={`text-employee-role-${emp.id}`}>
+                    <span
+                      className="text-xs text-muted-foreground"
+                      data-testid={`text-employee-role-${emp.id}`}
+                    >
                       {emp.role}
                     </span>
                   </div>
-
                   <div className="flex items-center gap-2">
                     <span
-                      className={`text-xs ${emp.isActive !== false ? "text-green-600" : "text-muted-foreground"}`}
+                      className={`text-xs ${
+                        emp.isActive !== false
+                          ? "text-green-600"
+                          : "text-muted-foreground"
+                      }`}
                       data-testid={`text-employee-status-${emp.id}`}
                     >
-                      {emp.isActive !== false ? (locale === "pt" ? "Ativo" : "Active") : (locale === "pt" ? "Inativo" : "Inactive")}
+                      {emp.isActive !== false
+                        ? locale === "pt"
+                          ? "Ativo"
+                          : "Active"
+                        : locale === "pt"
+                        ? "Inativo"
+                        : "Inactive"}
                     </span>
-
                     <Button
                       size="icon"
                       variant="ghost"
-                      onClick={() => toggleActive.mutate({ userId: emp.id, isActive: emp.isActive === false })}
+                      onClick={() =>
+                        toggleActive.mutate({
+                          userId: emp.id,
+                          isActive: emp.isActive === false,
+                        })
+                      }
                       data-testid={`button-toggle-employee-${emp.id}`}
                     >
-                      {emp.isActive !== false ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
+                      {emp.isActive !== false ? (
+                        <Power className="w-4 h-4" />
+                      ) : (
+                        <PowerOff className="w-4 h-4" />
+                      )}
                     </Button>
                   </div>
                 </div>
@@ -416,8 +558,9 @@ function UserSpecialtyEditor({
 
         {!loadingTokens && inviteTokens.length > 0 && (
           <div className="space-y-2">
-            <h3 className="text-sm font-medium">{locale === "pt" ? "Convites" : "Invitations"}</h3>
-
+            <h3 className="text-sm font-medium">
+              {locale === "pt" ? "Convites" : "Invitations"}
+            </h3>
             {inviteTokens.map((token: any, idx: number) => (
               <div
                 key={token.id || idx}
@@ -425,15 +568,20 @@ function UserSpecialtyEditor({
                 data-testid={`invite-token-${token.id || idx}`}
               >
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-xs font-mono text-muted-foreground">{token.token?.slice(0, 12)}...</span>
-                  <span className="text-xs text-muted-foreground">{token.role}</span>
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {token.token?.slice(0, 12)}...
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {token.role}
+                  </span>
                 </div>
-
                 <span
                   className={`text-xs font-medium ${
-                    getTokenStatus(token) === "Active" || getTokenStatus(token) === "Ativo"
+                    getTokenStatus(token) === "Active" ||
+                    getTokenStatus(token) === "Ativo"
                       ? "text-green-600"
-                      : getTokenStatus(token) === "Used" || getTokenStatus(token) === "Usado"
+                      : getTokenStatus(token) === "Used" ||
+                        getTokenStatus(token) === "Usado"
                       ? "text-blue-600"
                       : "text-muted-foreground"
                   }`}
@@ -449,6 +597,7 @@ function UserSpecialtyEditor({
     </Card>
   );
 }
+
 function SettingsForm() {
   const { data: settings, isLoading } = useSettings();
   const updateSettings = useUpdateSettings();
@@ -537,7 +686,6 @@ function SettingsForm() {
             </CardTitle>
             <CardDescription>{t("regionPricingDesc")}</CardDescription>
           </CardHeader>
-
           <CardContent>
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -549,7 +697,9 @@ function SettingsForm() {
                       <FormLabel>{t("region")}</FormLabel>
                       <Select
                         value={field.value?.toString() || ""}
-                        onValueChange={(v) => field.onChange(v ? parseInt(v) : undefined)}
+                        onValueChange={(v) =>
+                          field.onChange(v ? parseInt(v) : undefined)
+                        }
                       >
                         <FormControl>
                           <SelectTrigger data-testid="select-region">
@@ -569,10 +719,15 @@ function SettingsForm() {
                     </FormItem>
                   )}
                 />
-
                 <div className="flex justify-end">
-                  <Button type="submit" disabled={updateSettings.isPending} data-testid="button-save-region">
-                    {updateSettings.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  <Button
+                    type="submit"
+                    disabled={updateSettings.isPending}
+                    data-testid="button-save-region"
+                  >
+                    {updateSettings.isPending && (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    )}
                     {t("saveChanges")}
                   </Button>
                 </div>
@@ -583,9 +738,7 @@ function SettingsForm() {
       )}
 
       {isAdminOrOwner && <ManageSpecialties t={t} />}
-
       {isAdminOrOwner && <EmployeeManagement locale={locale} />}
-
       {isAdminOrOwner && <CompanyEmployeePermissions t={t} />}
 
       {isAdminOrOwner && (
@@ -594,7 +747,6 @@ function SettingsForm() {
             <CardTitle>{t("generalConfiguration")}</CardTitle>
             <CardDescription>{t("settingsApplyDefault")}</CardDescription>
           </CardHeader>
-
           <CardContent>
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
@@ -624,7 +776,9 @@ function SettingsForm() {
                   name="overheadRate"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{(t("overheadRate" as any) as any) || "Overhead Rate (%)"}</FormLabel>
+                      <FormLabel>
+                        {t("overheadRate" as any) || "Overhead Rate (%)"}
+                      </FormLabel>
                       <FormControl>
                         <Input
                           type="number"
@@ -635,7 +789,8 @@ function SettingsForm() {
                         />
                       </FormControl>
                       <FormDescription>
-                        {(t("overheadRateDescription" as any) as any) || "Applied to subtotal for overhead costs"}
+                        {t("overheadRateDescription" as any) ||
+                          "Applied to subtotal for overhead costs"}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -647,7 +802,9 @@ function SettingsForm() {
                   name="profitRate"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{(t("profitRate" as any) as any) || "Profit Rate (%)"}</FormLabel>
+                      <FormLabel>
+                        {t("profitRate" as any) || "Profit Rate (%)"}
+                      </FormLabel>
                       <FormControl>
                         <Input
                           type="number"
@@ -657,15 +814,24 @@ function SettingsForm() {
                           data-testid="input-profit-rate"
                         />
                       </FormControl>
-                      <FormDescription>{(t("profitRateDescription" as any) as any) || "Profit margin percentage"}</FormDescription>
+                      <FormDescription>
+                        {t("profitRateDescription" as any) ||
+                          "Profit margin percentage"}
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
 
                 <div className="flex justify-end pt-4">
-                  <Button type="submit" disabled={updateSettings.isPending} data-testid="button-save-settings">
-                    {updateSettings.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  <Button
+                    type="submit"
+                    disabled={updateSettings.isPending}
+                    data-testid="button-save-settings"
+                  >
+                    {updateSettings.isPending && (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    )}
                     {t("saveChanges")}
                   </Button>
                 </div>
@@ -677,6 +843,7 @@ function SettingsForm() {
     </div>
   );
 }
+
 export default function Settings() {
   return <SettingsForm />;
 }
