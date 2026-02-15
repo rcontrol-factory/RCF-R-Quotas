@@ -1,0 +1,2 @@
+// client/src/hooks/use-settings
+export * from "./use-settings.ts";
